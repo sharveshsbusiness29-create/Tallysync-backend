@@ -35,7 +35,20 @@ def kv_get(key, default):
     result = r.json().get("result")
     if result is None:
         return default
-    return json.loads(result)
+    try:
+        parsed = json.loads(result)
+    except (json.JSONDecodeError, TypeError):
+        return default
+    # Defend against old double-encoded data from a previous bug:
+    # if the first decode still yields a string, try decoding once more.
+    if isinstance(parsed, str):
+        try:
+            parsed = json.loads(parsed)
+        except (json.JSONDecodeError, TypeError):
+            return default
+    if not isinstance(parsed, (list, dict)):
+        return default
+    return parsed
 
 
 def kv_set(key, value):
@@ -472,6 +485,12 @@ def add_invoice():
 
 @app.route("/api/pending-invoices", methods=["GET"])
 def pending_invoices():
+    """
+    TDL Collection target. Matches the pattern already proven working:
+    [Collection: PendingInvoicesColl]
+    Data Source     : HTTP JSON : "http://localhost:5000/api/pending-invoices"
+    JSON Object Path: "invoices:1"
+    """
     invoices = load_invoices()
     pending = [inv for inv in invoices if inv["status"] == "pending"]
     return jsonify({"invoices": pending})
@@ -479,11 +498,19 @@ def pending_invoices():
 
 @app.route("/api/tally-sync", methods=["POST"])
 def tally_sync():
+    """
+    Batch confirmation endpoint. TDL's Repeat-based export naturally
+    sends ALL pending invoices in one POST as an array under "Sale",
+    e.g. {"Sale": [{"invoice_id": "..."}, {"invoice_id": "..."}]}
+    We mark every invoice_id found as posted.
+    """
     data = request.get_json(force=True, silent=True) or {}
+    # Tally automatically wraps the payload in "ENVELOPE" - check there first,
+    # but also allow a flat structure for flexibility/testing.
     envelope = data.get("ENVELOPE", data)
     sale_entries = envelope.get("Sale", [])
     if isinstance(sale_entries, dict):
-        sale_entries = [sale_entries]
+        sale_entries = [sale_entries]  # single item comes back as dict, not list
 
     confirmed_ids = [entry.get("invoice_id") for entry in sale_entries if entry.get("invoice_id")]
 
@@ -500,6 +527,10 @@ def tally_sync():
 
 @app.route("/api/tally-groups", methods=["POST"])
 def receive_tally_groups():
+    """
+    Receives ALL Groups (name + immediate parent) from Tally, used
+    to reconstruct the full Group -> Sub-Group hierarchy for display.
+    """
     data = request.get_json(force=True, silent=True) or {}
     envelope = data.get("ENVELOPE", data)
     group_entries = envelope.get("Group", [])
@@ -512,6 +543,11 @@ def receive_tally_groups():
 
 @app.route("/api/tally-ledgers", methods=["POST"])
 def receive_tally_ledgers():
+    """
+    Receives Chart of Accounts data (ledgers) read directly from
+    Tally's own database (Type: Ledger collection), sent via the
+    same Repeat-based POST pattern proven for vouchers/confirmation.
+    """
     data = request.get_json(force=True, silent=True) or {}
     envelope = data.get("ENVELOPE", data)
     ledger_entries = envelope.get("Ledger", [])
@@ -529,6 +565,12 @@ def get_tally_ledgers():
 
 @app.route("/api/tally-vouchers", methods=["POST"])
 def receive_tally_vouchers():
+    """
+    Receives vouchers TDL reads directly from Tally's own database
+    (Type: Voucher collection), sent via the same Repeat-based POST
+    pattern used for invoice confirmation. Payload arrives wrapped
+    in ENVELOPE, same as the confirm endpoint.
+    """
     data = request.get_json(force=True, silent=True) or {}
     envelope = data.get("ENVELOPE", data)
     voucher_entries = envelope.get("Voucher", [])
@@ -546,6 +588,11 @@ def get_tally_vouchers():
 
 @app.route("/api/confirm/<invoice_id>", methods=["GET"])
 def confirm_invoice(invoice_id):
+    """
+    GET-based confirmation. TDL's proven HTTP JSON GET pattern
+    (Data Source: HTTP JSON) can call this directly with the
+    invoice ID embedded in the URL - no POST body needed at all.
+    """
     invoices = load_invoices()
     found = False
     for inv in invoices:
