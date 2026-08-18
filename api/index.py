@@ -615,11 +615,18 @@ def parse_xml_body():
     matching what TDL's Remote Request/XMLTAG structure sends."""
     try:
         root = ET.fromstring(request.data)
-    except ET.ParseError:
+    except ET.ParseError as e:
+        kv_set("debug_last_ledgers_xml_parse_error", f"{e} (body length: {len(request.data)} bytes)")
         return []
     # root is expected to be <ENVELOPE> containing repeated child tags
     return [{child.tag.lower(): (child.text or "") for child in item}
             for item in root]
+
+
+@app.route("/debug/last-ledgers-parse-error")
+def debug_last_ledgers_parse_error():
+    err = kv_get_string("debug_last_ledgers_xml_parse_error", "(no parse error recorded)")
+    return Response(f"<pre>{xml_escape(err)}</pre>", mimetype="text/html")
 
 
 @app.route("/api/tally-ledgers-xml", methods=["POST"])
@@ -627,11 +634,18 @@ def receive_tally_ledgers_xml():
     raw = request.data.decode("utf-8", errors="replace")
     kv_set("debug_last_ledgers_xml_raw", raw)
     entries = parse_xml_body()
+    kv_set("debug_last_ledgers_xml_parsed", entries)
     save_tally_ledgers(entries)
     return Response(
         f"<ENVELOPE><STATUS>1</STATUS><RECEIVED>{len(entries)}</RECEIVED></ENVELOPE>",
         mimetype="text/xml",
     )
+
+
+@app.route("/debug/last-ledgers-parsed")
+def debug_last_ledgers_parsed():
+    parsed = kv_get("debug_last_ledgers_xml_parsed", [])
+    return jsonify({"parsed_count": len(parsed), "parsed_entries": parsed})
 
 
 def kv_get_string(key, default):
