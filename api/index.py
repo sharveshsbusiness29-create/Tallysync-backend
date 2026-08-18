@@ -610,11 +610,34 @@ def confirm_invoice(invoice_id):
 # using the ENVELOPE structure confirmed in Tally's own ERP9 FAQ
 # (Remote URL / Remote Request / XML Object Path pattern).
 
+import re
+
+_XML_ILLEGAL_CHARS_RE = re.compile(
+    "[^\x09\x0A\x0D\x20-\uD7FF\uE000-\uFFFD]"
+)
+
+
+def sanitize_xml(raw_bytes_or_str):
+    """
+    Strips characters that are illegal inside XML 1.0 content.
+    Tally emits raw control characters in some fields (notably the
+    hidden marker byte, \\x04, used ahead of "Primary" for top-level
+    groups) without escaping them, which produces technically
+    invalid XML that a standards-compliant parser correctly rejects.
+    """
+    if isinstance(raw_bytes_or_str, bytes):
+        text = raw_bytes_or_str.decode("utf-8", errors="replace")
+    else:
+        text = raw_bytes_or_str
+    return _XML_ILLEGAL_CHARS_RE.sub("", text)
+
+
 def parse_xml_body():
     """Parses an incoming XML request body wrapped in ENVELOPE,
     matching what TDL's Remote Request/XMLTAG structure sends."""
+    cleaned = sanitize_xml(request.data)
     try:
-        root = ET.fromstring(request.data)
+        root = ET.fromstring(cleaned)
     except ET.ParseError as e:
         kv_set("debug_last_ledgers_xml_parse_error", f"{e} (body length: {len(request.data)} bytes)")
         return []
