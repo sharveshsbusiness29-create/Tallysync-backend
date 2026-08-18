@@ -626,12 +626,20 @@ def parse_xml_body():
 
 @app.route("/api/tally-ledgers-xml", methods=["POST"])
 def receive_tally_ledgers_xml():
+    raw = request.data.decode("utf-8", errors="replace")
+    kv_set("debug_last_ledgers_xml_raw", raw)
     entries = parse_xml_body()
     save_tally_ledgers(entries)
     return Response(
         f"<ENVELOPE><STATUS>1</STATUS><RECEIVED>{len(entries)}</RECEIVED></ENVELOPE>",
         mimetype="text/xml",
     )
+
+
+@app.route("/debug/last-ledgers-xml")
+def debug_last_ledgers_xml():
+    raw = kv_get("debug_last_ledgers_xml_raw", "(nothing received yet)")
+    return Response(f"<pre>{xml_escape(raw)}</pre>", mimetype="text/html")
 
 
 @app.route("/api/tally-groups-xml", methods=["POST"])
