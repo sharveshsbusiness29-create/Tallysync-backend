@@ -1,13 +1,11 @@
 """
-Tally <-> Website POC backend.
+Tally <-> Website backend, deployed on Vercel.
 
-Run this on the SAME machine as TallyPrime. TDL will call it via
-http://localhost:5000/... exactly like the tests you already ran
-against httpbin.org and localhost:9000.
+Live at: https://tallysync-backend.vercel.app
 
-Requires: pip install flask --break-system-packages
-Run:      python app.py
-Website:  http://localhost:5000
+Storage: Vercel KV (Upstash Redis) - requires KV_REST_API_URL and
+KV_REST_API_TOKEN environment variables, set automatically when a
+KV/Upstash store is attached to this Vercel project.
 """
 
 from flask import Flask, request, jsonify, render_template_string, Response
@@ -636,9 +634,27 @@ def receive_tally_ledgers_xml():
     )
 
 
+def kv_get_string(key, default):
+    """Like kv_get, but for plain string values (e.g. debug logs),
+    not restricted to list/dict like the main kv_get is."""
+    if not KV_URL:
+        return default
+    r = http_requests.get(f"{KV_URL}/get/{key}", headers={"Authorization": f"Bearer {KV_TOKEN}"})
+    if r.status_code != 200:
+        return default
+    result = r.json().get("result")
+    if result is None:
+        return default
+    try:
+        parsed = json.loads(result)
+    except (json.JSONDecodeError, TypeError):
+        return default
+    return parsed if isinstance(parsed, str) else default
+
+
 @app.route("/debug/last-ledgers-xml")
 def debug_last_ledgers_xml():
-    raw = kv_get("debug_last_ledgers_xml_raw", "(nothing received yet)")
+    raw = kv_get_string("debug_last_ledgers_xml_raw", "(nothing received yet)")
     return Response(f"<pre>{xml_escape(raw)}</pre>", mimetype="text/html")
 
 
