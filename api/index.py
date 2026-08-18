@@ -689,6 +689,11 @@ def kv_get_string(key, default):
     return parsed if isinstance(parsed, str) else default
 
 
+@app.route("/debug/version")
+def debug_version():
+    return "VERSION-CHECK-MARKER-002-sanitize-xml-fix-present"
+
+
 @app.route("/debug/last-ledgers-xml")
 def debug_last_ledgers_xml():
     raw = kv_get_string("debug_last_ledgers_xml_raw", "(nothing received yet)")
