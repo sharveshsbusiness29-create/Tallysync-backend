@@ -413,7 +413,10 @@ def home():
     invoices = load_invoices()
     tally_vouchers = load_tally_vouchers()
     tally_ledgers = build_enriched_ledgers()
-    return render_template_string(PAGE, invoices=invoices, tally_vouchers=tally_vouchers, tally_ledgers=tally_ledgers, pending_ledgers=load_pending_ledgers())
+    html = render_template_string(PAGE, invoices=invoices, tally_vouchers=tally_vouchers, tally_ledgers=tally_ledgers, pending_ledgers=load_pending_ledgers())
+    response = Response(html, mimetype="text/html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 @app.route("/add-ledger", methods=["POST"])
