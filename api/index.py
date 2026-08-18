@@ -10,11 +10,13 @@ Run:      python app.py
 Website:  http://localhost:5000
 """
 
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, Response
 import json
 import os
 import uuid
 import requests as http_requests
+import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape as xml_escape
 from datetime import datetime
 
 app = Flask(__name__)
@@ -603,6 +605,88 @@ def confirm_invoice(invoice_id):
             break
     save_invoices(invoices)
     return jsonify({"status": "1" if found else "0", "invoice_id": invoice_id})
+
+
+# ---------- ERP 9 / XML compatible endpoints ----------
+# These mirror the JSON endpoints above exactly, but speak XML,
+# using the ENVELOPE structure confirmed in Tally's own ERP9 FAQ
+# (Remote URL / Remote Request / XML Object Path pattern).
+
+def parse_xml_body():
+    """Parses an incoming XML request body wrapped in ENVELOPE,
+    matching what TDL's Remote Request/XMLTAG structure sends."""
+    try:
+        root = ET.fromstring(request.data)
+    except ET.ParseError:
+        return []
+    # root is expected to be <ENVELOPE> containing repeated child tags
+    return [{child.tag.lower(): (child.text or "") for child in item}
+            for item in root]
+
+
+@app.route("/api/tally-ledgers-xml", methods=["POST"])
+def receive_tally_ledgers_xml():
+    entries = parse_xml_body()
+    save_tally_ledgers(entries)
+    return Response(
+        f"<ENVELOPE><STATUS>1</STATUS><RECEIVED>{len(entries)}</RECEIVED></ENVELOPE>",
+        mimetype="text/xml",
+    )
+
+
+@app.route("/api/tally-groups-xml", methods=["POST"])
+def receive_tally_groups_xml():
+    entries = parse_xml_body()
+    save_tally_groups(entries)
+    return Response(
+        f"<ENVELOPE><STATUS>1</STATUS><RECEIVED>{len(entries)}</RECEIVED></ENVELOPE>",
+        mimetype="text/xml",
+    )
+
+
+@app.route("/api/pending-ledgers-xml", methods=["GET"])
+def pending_ledgers_xml():
+    pending = load_pending_ledgers()
+    still_pending = [p for p in pending if p["status"] == "pending"]
+    rows = ""
+    for p in still_pending:
+        rows += (
+            "<LEDGER>"
+            f"<REQUESTID>{xml_escape(p.get('request_id',''))}</REQUESTID>"
+            f"<REQUESTNAME>{xml_escape(p.get('name',''))}</REQUESTNAME>"
+            f"<REQUESTPARENT>{xml_escape(p.get('parent',''))}</REQUESTPARENT>"
+            f"<REQUESTOPENINGBALANCE>{xml_escape(str(p.get('opening_balance','0')))}</REQUESTOPENINGBALANCE>"
+            "</LEDGER>"
+        )
+    # Matches the confirmed structure from Tally's own ERP9 FAQ example:
+    # TALLYMESSAGE:1:ENVELOPE:BODY:1
+    xml_body = (
+        "<TALLYMESSAGE>"
+        "<ENVELOPE>"
+        f"<BODY>{rows}</BODY>"
+        "</ENVELOPE>"
+        "</TALLYMESSAGE>"
+    )
+    response = Response(xml_body, mimetype="text/xml")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@app.route("/api/confirm-ledgers-xml", methods=["POST"])
+def confirm_ledgers_xml():
+    entries = parse_xml_body()
+    ids = [e.get("request_id") for e in entries if e.get("request_id")]
+    pending = load_pending_ledgers()
+    confirmed = 0
+    for p in pending:
+        if p["request_id"] in ids:
+            p["status"] = "created"
+            confirmed += 1
+    save_pending_ledgers(pending)
+    return Response(
+        f"<ENVELOPE><STATUS>1</STATUS><CONFIRMED>{confirmed}</CONFIRMED></ENVELOPE>",
+        mimetype="text/xml",
+    )
 
 
 # Vercel imports `app` directly from this file as the WSGI handler
