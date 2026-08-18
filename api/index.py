@@ -651,21 +651,28 @@ import re
 _XML_ILLEGAL_CHARS_RE = re.compile(
     "[^\x09\x0A\x0D\x20-\uD7FF\uE000-\uFFFD]"
 )
+# Matches a bare "&" that isn't already part of a valid XML entity
+# (like &amp; &lt; &gt; &quot; &apos; or a numeric &#123; / &#x1F;)
+_BARE_AMPERSAND_RE = re.compile(r"&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)")
 
 
 def sanitize_xml(raw_bytes_or_str):
     """
-    Strips characters that are illegal inside XML 1.0 content.
-    Tally emits raw control characters in some fields (notably the
-    hidden marker byte, \\x04, used ahead of "Primary" for top-level
-    groups) without escaping them, which produces technically
-    invalid XML that a standards-compliant parser correctly rejects.
+    Fixes common real-world issues that make Tally's exported XML
+    technically invalid:
+    - Strips XML-illegal control characters (e.g. the hidden marker
+      byte, \\x04, used ahead of "Primary" for top-level groups).
+    - Escapes bare ampersands, since many real business/ledger names
+      contain "&" (e.g. "S & S Enterprises") and TDL's export does
+      not appear to escape it automatically.
     """
     if isinstance(raw_bytes_or_str, bytes):
         text = raw_bytes_or_str.decode("utf-8", errors="replace")
     else:
         text = raw_bytes_or_str
-    return _XML_ILLEGAL_CHARS_RE.sub("", text)
+    text = _XML_ILLEGAL_CHARS_RE.sub("", text)
+    text = _BARE_AMPERSAND_RE.sub("&amp;", text)
+    return text
 
 
 def parse_xml_body():
@@ -694,11 +701,24 @@ def receive_tally_ledgers_xml():
     kv_set("debug_last_ledgers_xml_raw", raw)
     entries = parse_xml_body()
     kv_set("debug_last_ledgers_xml_parsed", entries)
-    save_tally_ledgers(entries)
+    kv_set("debug_last_ledgers_xml_entry_count", str(len(entries)))
+    if entries:
+        # Only overwrite if parsing genuinely produced real data - a
+        # failed/empty parse (e.g. from a malformed real Tally payload
+        # elsewhere in the dataset) should not silently wipe out
+        # previously good data.
+        save_tally_ledgers(entries)
     return Response(
         f"<ENVELOPE><STATUS>1</STATUS><RECEIVED>{len(entries)}</RECEIVED></ENVELOPE>",
         mimetype="text/xml",
     )
+
+
+@app.route("/debug/last-ledgers-count")
+def debug_last_ledgers_count():
+    count = kv_get_string("debug_last_ledgers_xml_entry_count", "(no count recorded)")
+    stored_count = len(load_tally_ledgers())
+    return jsonify({"last_parse_attempt_count": count, "currently_stored_count": stored_count})
 
 
 @app.route("/debug/last-ledgers-parsed")
