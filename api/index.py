@@ -591,7 +591,9 @@ def receive_tally_ledgers():
 
 @app.route("/api/tally-ledgers", methods=["GET"])
 def get_tally_ledgers():
-    return jsonify({"ledgers": load_tally_ledgers()})
+    response = jsonify({"ledgers": load_tally_ledgers()})
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 @app.route("/api/tally-vouchers", methods=["POST"])
@@ -699,7 +701,9 @@ def receive_tally_ledgers_xml():
 @app.route("/debug/last-ledgers-parsed")
 def debug_last_ledgers_parsed():
     parsed = kv_get("debug_last_ledgers_xml_parsed", [])
-    return jsonify({"parsed_count": len(parsed), "parsed_entries": parsed})
+    response = jsonify({"parsed_count": len(parsed), "parsed_entries": parsed})
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 def kv_get_string(key, default):
