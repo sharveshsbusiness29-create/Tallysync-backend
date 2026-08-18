@@ -651,17 +651,38 @@ import re
 _XML_ILLEGAL_CHARS_RE = re.compile(
     "[^\x09\x0A\x0D\x20-\uD7FF\uE000-\uFFFD]"
 )
-# Matches a bare "&" that isn't already part of a valid XML entity
-# (like &amp; &lt; &gt; &quot; &apos; or a numeric &#123; / &#x1F;)
 _BARE_AMPERSAND_RE = re.compile(r"&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)")
+# Matches numeric character references like &#4; or &#x4; - these are
+# valid XML *syntax* but still illegal if the referenced codepoint
+# itself is an illegal XML character (e.g. Tally's hidden marker
+# byte ahead of "Primary" is emitted this way: &#4; Primary).
+_NUMERIC_ENTITY_RE = re.compile(r"&#(\d+);|&#x([0-9a-fA-F]+);")
+
+
+def _is_illegal_xml_codepoint(codepoint):
+    return not (
+        codepoint in (0x09, 0x0A, 0x0D)
+        or (0x20 <= codepoint <= 0xD7FF)
+        or (0xE000 <= codepoint <= 0xFFFD)
+    )
+
+
+def _strip_illegal_numeric_entities(text):
+    def replace(match):
+        codepoint = int(match.group(1)) if match.group(1) else int(match.group(2), 16)
+        return "" if _is_illegal_xml_codepoint(codepoint) else match.group(0)
+    return _NUMERIC_ENTITY_RE.sub(replace, text)
 
 
 def sanitize_xml(raw_bytes_or_str):
     """
     Fixes common real-world issues that make Tally's exported XML
     technically invalid:
-    - Strips XML-illegal control characters (e.g. the hidden marker
-      byte, \\x04, used ahead of "Primary" for top-level groups).
+    - Strips XML-illegal control characters appearing as raw bytes.
+    - Strips numeric character references (e.g. &#4;) that resolve
+      to an illegal control character - valid XML syntax, but the
+      referenced character itself is not legal XML content, so a
+      standards-compliant parser rejects it during parsing.
     - Escapes bare ampersands, since many real business/ledger names
       contain "&" (e.g. "S & S Enterprises") and TDL's export does
       not appear to escape it automatically.
@@ -671,6 +692,7 @@ def sanitize_xml(raw_bytes_or_str):
     else:
         text = raw_bytes_or_str
     text = _XML_ILLEGAL_CHARS_RE.sub("", text)
+    text = _strip_illegal_numeric_entities(text)
     text = _BARE_AMPERSAND_RE.sub("&amp;", text)
     return text
 
