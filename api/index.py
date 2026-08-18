@@ -54,11 +54,42 @@ def kv_get(key, default):
 def kv_set(key, value):
     if not KV_URL:
         return
-    http_requests.post(
-        f"{KV_URL}/set/{key}",
-        headers={"Authorization": f"Bearer {KV_TOKEN}", "Content-Type": "application/json"},
-        data=json.dumps(value),
-    )
+    try:
+        r = http_requests.post(
+            f"{KV_URL}/set/{key}",
+            headers={"Authorization": f"Bearer {KV_TOKEN}", "Content-Type": "application/json"},
+            data=json.dumps(value),
+            timeout=8,
+        )
+        if r.status_code != 200:
+            # Record the failure so we can actually see it, since this
+            # was previously being silently ignored no matter what
+            # Upstash returned.
+            try:
+                http_requests.post(
+                    f"{KV_URL}/set/debug_last_kv_set_error",
+                    headers={"Authorization": f"Bearer {KV_TOKEN}", "Content-Type": "application/json"},
+                    data=json.dumps(f"key={key} status={r.status_code} body={r.text[:300]}"),
+                    timeout=8,
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        try:
+            http_requests.post(
+                f"{KV_URL}/set/debug_last_kv_set_error",
+                headers={"Authorization": f"Bearer {KV_TOKEN}", "Content-Type": "application/json"},
+                data=json.dumps(f"key={key} exception={str(e)[:300]}"),
+                timeout=8,
+            )
+        except Exception:
+            pass
+
+
+@app.route("/debug/last-kv-error")
+def debug_last_kv_error():
+    err = kv_get_string("debug_last_kv_set_error", "(no kv_set error recorded)")
+    return Response(f"<pre>{xml_escape(err)}</pre>", mimetype="text/html")
 
 
 def load_invoices():
