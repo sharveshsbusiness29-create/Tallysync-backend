@@ -159,10 +159,20 @@ def load_tally_ledgers():
 
 
 def save_tally_ledgers(ledgers):
-    # Full replace every sync - matches "only one Chart of Accounts
-    # active at a time" requirement. Old data is completely
-    # discarded, not merged, each time new data arrives.
-    kv_set("tally_ledgers", ledgers)
+    """
+    Merges incoming ledgers into existing storage, keyed by name.
+    This changed from a full replace to a merge because TDL now
+    sends incremental updates (only changed ledgers via AlterID
+    filtering) rather than the complete Chart of Accounts every
+    cycle - a full replace would wipe out everything not included
+    in that specific cycle's small batch.
+    """
+    existing = load_tally_ledgers()
+    existing_by_name = {l.get("name", "").strip().lower(): l for l in existing}
+    for new_ledger in ledgers:
+        key = new_ledger.get("name", "").strip().lower()
+        existing_by_name[key] = new_ledger  # add new, or overwrite if name matches
+    kv_set("tally_ledgers", list(existing_by_name.values()))
 
 
 def load_tally_vouchers():
