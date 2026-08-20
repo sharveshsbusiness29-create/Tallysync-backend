@@ -185,6 +185,7 @@ body { font-family: sans-serif; max-width: 700px; margin: 40px auto; }
 table { width: 100%; border-collapse: collapse; }
 th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
 .pending { color: #b8860b; }
+.duplicate { color: #c0392b; font-weight: bold; }
 .posted { color: #2e7d32; }
 form { margin-top: 30px; border-top: 1px solid #ccc; padding-top: 20px; }
 input, select { padding: 6px; margin: 4px 0; width: 100%; box-sizing: border-box; }
@@ -258,7 +259,7 @@ with status "pending" on its next timer cycle and create it as a voucher.</p>
 <td>{{ p.request_id }}</td>
 <td>{{ p.name }}</td>
 <td>{{ p.parent }}</td>
-<td class="{{ 'posted' if p.status == 'created' else 'pending' }}">{{ p.status }}</td>
+<td class="{{ 'posted' if p.status == 'created' else ('duplicate' if p.status == 'duplicate' else 'pending') }}">{{ p.status }}</td>
 </tr>
 {% endfor %}
 </table>
@@ -456,24 +457,30 @@ def pending_ledgers(cache_bust=None):
 @app.route("/api/confirm-ledgers", methods=["POST"])
 def confirm_ledgers_batch():
     """
-    Batch confirmation, reusing the proven Repeat-based POST pattern
-    (same mechanism that successfully confirmed invoices) instead of
-    the single-object GET confirm, which never produced a walkable
-    response no matter how it was structured.
+    Batch confirmation, reusing the proven Repeat-based POST pattern.
+    Each entry now carries its own result_status ("created" or
+    "duplicate"), sent by TDL depending on whether the ledger already
+    existed in Tally, so the website can show a clear, honest status
+    instead of leaving duplicates stuck showing "pending" forever.
     """
     data = request.get_json(force=True, silent=True) or {}
     envelope = data.get("ENVELOPE", data)
     entries = envelope.get("Ledger", [])
     if isinstance(entries, dict):
         entries = [entries]
-    ids = [e.get("request_id") for e in entries if e.get("request_id")]
 
     pending = load_pending_ledgers()
     confirmed = 0
-    for p in pending:
-        if p["request_id"] in ids:
-            p["status"] = "created"
-            confirmed += 1
+    for entry in entries:
+        req_id = entry.get("request_id")
+        result_status = entry.get("result_status", "created")  # default for backward compatibility
+        if result_status not in ("created", "duplicate"):
+            result_status = "created"
+        for p in pending:
+            if p["request_id"] == req_id:
+                p["status"] = result_status
+                confirmed += 1
+                break
     save_pending_ledgers(pending)
     return jsonify({"status": "1", "confirmed_count": confirmed})
 
