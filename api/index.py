@@ -599,6 +599,25 @@ def receive_tally_groups():
     return jsonify({"status": "1", "received_count": len(group_entries)})
 
 
+@app.route("/debug/sync-history")
+def debug_sync_history():
+    history = kv_get("ledger_sync_history", [])
+    rows = ""
+    for h in reversed(history):
+        rows += f"<tr><td>{h['timestamp']}</td><td>{h['received_count']}</td></tr>"
+    html = f"""
+    <html><head><title>Debug: Sync History</title>
+    <style>table {{ border-collapse: collapse; }} td, th {{ border: 1px solid #ccc; padding: 6px; }}</style>
+    </head><body>
+    <h2>Ledger Sync History (most recent 20 cycles)</h2>
+    <p>If incremental sync is working, most cycles should show a small number
+    (or 0) after the first cycle - not the full ledger count every time.</p>
+    <table><tr><th>Timestamp</th><th>Ledgers Received This Cycle</th></tr>{rows}</table>
+    </body></html>
+    """
+    return html
+
+
 @app.route("/api/tally-ledgers", methods=["POST"])
 def receive_tally_ledgers():
     """
@@ -611,6 +630,17 @@ def receive_tally_ledgers():
     ledger_entries = envelope.get("Ledger", [])
     if isinstance(ledger_entries, dict):
         ledger_entries = [ledger_entries]
+
+    # Track received-count history, so we can directly verify
+    # incremental sync is genuinely sending fewer ledgers per cycle
+    # rather than the full Chart of Accounts every time.
+    history = kv_get("ledger_sync_history", [])
+    history.append({
+        "timestamp": datetime.utcnow().isoformat(),
+        "received_count": len(ledger_entries),
+    })
+    history = history[-20:]  # keep only the most recent 20 cycles
+    kv_set("ledger_sync_history", history)
 
     save_tally_ledgers(ledger_entries)
     return jsonify({"status": "1", "received_count": len(ledger_entries)})
