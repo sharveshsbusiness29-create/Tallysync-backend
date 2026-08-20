@@ -422,13 +422,20 @@ def home():
 
 @app.route("/add-ledger", methods=["POST"])
 def add_ledger():
+    name = request.form["name"]
     pending = load_pending_ledgers()
+
+    # Check against the real Tally ledgers we already have synced -
+    # no need to ask Tally to check this itself, we already know.
+    existing_ledger_names = {l.get("name", "").strip().lower() for l in load_tally_ledgers()}
+    is_duplicate = name.strip().lower() in existing_ledger_names
+
     new_ledger = {
         "request_id": "LDG-" + str(uuid.uuid4())[:8].upper(),
-        "name": request.form["name"],
+        "name": name,
         "parent": request.form["parent"],
         "opening_balance": request.form.get("opening_balance", "0"),
-        "status": "pending",
+        "status": "duplicate" if is_duplicate else "pending",
         "created_at": datetime.utcnow().isoformat(),
     }
     pending.append(new_ledger)
